@@ -1,5 +1,5 @@
-#ifndef CFJSON_CPP
-#define CFJSON_CPP
+#ifndef JSON_CPP
+#define JSON_CPP
 
 //json parser
 #include <string>
@@ -146,45 +146,48 @@ namespace json {
 	namespace exception{
 		class GenericError: public std::exception{
 			public:
-			GenericError() {
-				errmsg="[!] json Generic Error";
-			}
-			GenericError(std::string const str){
-				msg = str;
-				GenericError();
-			}
+			GenericError() {setmsg();}
+			GenericError(std::string const str) {setmsg(str);}
 
-			virtual const char* what() const throw(){
-				std::string errstr(errmsg);
-				if(!msg.empty()) errstr+=": "+msg;
+			virtual
+			const char* what() const throw(){
 				return errmsg.c_str();
 			}
 
 			protected:
 			std::string errmsg;
-			std::string msg;
+
+			virtual
+			void setmsg(std::string const msg=""){
+				errmsg="[!] json Generic Error";
+				if(!msg.empty()) errmsg+=": "+msg;
+			};
 		};
 
 		class ParseError: public GenericError{
 			public:
-			ParseError() {
+			ParseError() {setmsg();}
+			ParseError(std::string const msg) {setmsg(msg);}
+
+			protected:
+			virtual
+			void setmsg(std::string const msg=""){
 				errmsg="[!] json Parse Error";
-			}
-			ParseError(std::string const str) {
-				msg=str;
-				ParseError();
-			}
+				if(!msg.empty()) errmsg+=": "+msg;
+			};
 		};
 
 		class AccessError: public GenericError{
 			public:
-			AccessError() {
+			AccessError() {setmsg();}
+			AccessError(std::string const msg) {setmsg(msg);}
+
+			protected:
+			virtual
+			void setmsg(std::string const msg=""){
 				errmsg="[!] json Access Error";
-			}
-			AccessError(std::string const str) {
-				msg=str;
-				AccessError();
-			}
+				if(!msg.empty()) errmsg+=": "+msg;
+			};
 		};
 
 	}
@@ -210,9 +213,44 @@ namespace json {
 			return res;
 		}
 
-		bool inline
+		inline bool
 		isWhitespace(char const c){
 			return (std::string(" \n\t\r").find(c) != std::string::npos);
+		}
+
+		bool
+		passWhiteChar(std::string::const_iterator& c, std::string::const_iterator const end){
+			while( c != end){
+				if (!isWhitespace(*c)) return true;
+				else c++;
+			}
+			return false;
+		}
+
+		void
+		passUnmatch(std::string const& sub, std::string::const_iterator& c, std::string::const_iterator const end){
+			while( c != end){
+				if (strMatch(sub, c, end)) break;
+				c++;
+			}
+		}
+
+		bool
+		passComment(std::string::const_iterator& c, std::string::const_iterator const end){
+			if (strMatch("//", c, end)) {passUnmatch("\n", c, end); return true;}
+			if (strMatch("/*", c, end)) {passUnmatch("*/", c, end); return true;}
+			return false;
+		}
+
+		bool
+		passWhitespace(std::string::const_iterator& c, std::string::const_iterator const end){
+			passComment(c, end);
+			while( c != end){
+				if (passWhiteChar(c, end)) {
+					if(!passComment(c, end)) return true;
+				}
+			}
+			return false;
 		}
 
 		char
@@ -247,7 +285,7 @@ namespace json {
 			if (!file.is_open())
 				return false;
 			while (std::getline(file, line))
-				text << line;
+				text << line << '\n';
 			file.close();
 
 			str = text.str();
@@ -426,18 +464,24 @@ namespace json {
 			std::string res;
 			bool str_ended  = false;
 
-			if (*c=='\"')
-				c++;
-			while( c != end && !str_ended ){
-				switch (*c) {
-					case '\\':	{c++; res += tools::parseEscapeSequence(c, end); break;}
-					case '\"':	{str_ended = true; c++; break;}
-					case '\n':	{throw exception::ParseError("expected '\"'");}
-					default:	{res += *c; c++; break;}
+			while( c != end){
+				if(!tools::passWhitespace(c, end)) {throw exception::ParseError("expected '\"'");}
+				if (*c=='\"'){
+					bool str_piece_ended  = false;
+					c++;
+					while( c != end && !str_piece_ended ){
+						switch (*c) {
+							case '\\':	{c++; res += tools::parseEscapeSequence(c, end); break;}
+							case '\"':	{str_piece_ended = true; c++; break;}
+							case '\n':	{throw exception::ParseError("expected '\"'");}
+							default:	{res += *c; c++; break;}
+						}
+					}
+					if (!str_piece_ended)
+						throw exception::ParseError("expected '\"'");
 				}
+				else {str_ended = true; break;}
 			}
-			if (!str_ended)
-				throw exception::ParseError("expected '\"'");
 
 			return res;
 		}
@@ -451,7 +495,7 @@ namespace json {
 			if (*c=='[') c++;
 
 			while( c != end && !arr_ended ){
-				if (tools:: isWhitespace(*c)) {c++; continue;}
+				if(!tools::passWhitespace(c, end)) { throw exception::ParseError("expected json::Array");}
 				switch (*c){
 					case ',':{
 						if (!got_value)
@@ -493,11 +537,9 @@ namespace json {
 			bool got_value    = false;
 
 			if (*c=='{') c++;
-
+			
 			while( c != end && !obj_ended ){
-				if (tools:: isWhitespace(*c))
-					{c++; continue;}
-
+				if(!tools::passWhitespace(c, end)) {throw exception::ParseError("expected json::Object");}
 				switch (*c){
 					case ',': {
 						if (!got_value)
@@ -520,8 +562,7 @@ namespace json {
 						got_value		= true;
 						expect_value	= false;
 						std::string name = parseString(c, end);
-						while (tools::isWhitespace(*c) && c!=end)
-							{c++; continue;}
+						if(!tools::passWhitespace(c, end)) {throw exception::ParseError("expected :");}
 						if (*c!=':' || c==end)
 							throw exception::ParseError("expected ':'");
 						c++;
@@ -539,8 +580,9 @@ namespace json {
 		Value
 		parseValue(std::string::const_iterator& c, std::string::const_iterator const end){
 			if (c == end) return {};
+
 			while(c != end) {
-				if (tools::isWhitespace(*c)) {c++; continue;}
+				if(!tools::passWhitespace(c, end)) {throw exception::ParseError("expected value");}
 				else if (*c == '-' || std::isdigit(*c)) return parseNumber(c, end);
 				else{
 					switch (*c){
@@ -550,7 +592,7 @@ namespace json {
 						case 'f':	return parseBool(c, end);
 						case 't':	return parseBool(c, end);
 						case 'n':	return parseNull(c, end);
-						default:	throw exception::ParseError("invalid input");
+						default:	{throw exception::ParseError("invalid input");}
 					}
 				}
 			}
