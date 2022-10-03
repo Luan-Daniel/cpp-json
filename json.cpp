@@ -17,6 +17,7 @@ namespace json {
 	struct jsonWrapper;
 
 	enum json_t{Null_t=0, Bool_t, Number_t, String_t, Array_t, Object_t};
+	bool null_to_obj = true; // if Null type is accessed with a key (eg.: json::jsonWrapper jw(json::Null); jw["a"];) it changes to Object type
 
 	//
 	using json_ptr  = std::shared_ptr<jsonWrapper>;
@@ -51,9 +52,18 @@ namespace json {
 
 		jsonWrapper(std::shared_ptr<Value> const d)
 			{data = d;}
+		
+		jsonWrapper(jsonWrapper const& j)
+			{data = j.data;}
 
-		jsonWrapper(Value const& v)
-			{set(v);}
+		jsonWrapper(std::string const& str, bool parse_file=false){
+			if(!parse_file){
+				std::string::const_iterator begin = str.begin();
+				parse(begin, str.end());
+				return;
+			}
+			parseFile(str);
+		}
 
 		jsonWrapper(std::string::const_iterator begin, std::string::const_iterator const end)
 			{parse(begin, end);}
@@ -84,9 +94,6 @@ namespace json {
 
 		jsonWrapper&
 		operator [](String const& k);
-
-		jsonWrapper&
-		operator ()(String const& k);
 
 		bool
 		find(std::string const& k) const;
@@ -341,18 +348,11 @@ namespace json {
 
 	jsonWrapper&
 	jsonWrapper::operator [](String const& k){
-		throwIfItsNotAnObject();
-		//if('k' is not found) emplace 'k' as json::Null
+		if(type() == Null_t && null_to_obj) {set(Object());}
+		else throwIfItsNotAnObject();
 		if (!find(k))
 			get<Object>().emplace(k, std::make_shared<jsonWrapper>());
 		return (*(get<Object>()[k]));
-	}
-
-	jsonWrapper&
-	jsonWrapper::operator ()(String const& k){
-		//if('k' is not found) emplace 'k' as json::Object
-		get<Object>().emplace(k, std::make_shared<jsonWrapper>(Object()));
-		return *(get<Object>()[k]);
 	}
 
 	bool
